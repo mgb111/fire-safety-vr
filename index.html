@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VR Fire Safety Training</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background: #000;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 100;
+        }
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 400px;
+        }
+        #objective {
+            font-weight: bold;
+            color: #ffcc00;
+            margin-bottom: 10px;
+        }
+        #instructions {
+            color: #ccc;
+            line-height: 1.6;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        #interaction-prompt {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 200, 0, 0.9);
+            color: #000;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            display: none;
+            pointer-events: all;
+            cursor: pointer;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+        #completion-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            pointer-events: all;
+        }
+        .completion-title {
+            font-size: 48px;
+            color: #4CAF50;
+            margin-bottom: 20px;
+        }
+        .completion-score {
+            font-size: 24px;
+            margin-bottom: 30px;
+        }
+        .next-button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .next-button:hover {
+            background: #45a049;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        #module-title {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(220, 53, 69, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    
+    <div id="ui-overlay">
+        <div id="hud">
+            <div id="objective">Objective: Loading...</div>
+            <div id="instructions">Use WASD to move, Mouse to look around</div>
+        </div>
+        
+        <div id="module-title">Module 1: Fire Detection</div>
+        
+        <div id="controls">
+            WASD: Move | Mouse: Look | Click: Interact
+        </div>
+        
+        <div id="crosshair"></div>
+        
+        <div id="interaction-prompt">Press to Interact</div>
+        
+        <div id="completion-screen">
+            <div class="completion-title">✓ Module Complete!</div>
+            <div class="completion-score">Score: <span id="score">0</span>/100</div>
+            <div id="feedback-text"></div>
+            <button class="next-button" onclick="nextModule()">Next Module</button>
+            <button class="next-button" onclick="restartModule()">Restart Module</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, clock;
+        let player, moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        
+        // Game state
+        let currentModule = 1;
+        let moduleState = 'exploring'; // exploring, interacting, completed
+        let fireStarted = false;
+        let alarmActivated = false;
+        let extinguisherGrabbed = false;
+        let fireExtinguished = false;
+        let evacuated = false;
+        
+        // Interactive objects
+        let interactiveObjects = [];
+        let currentInteractable = null;
+        
+        // Fire and smoke
+        let fireParticles = [];
+        let smokeParticles = [];
+        
+        // Initialize
+        init();
+        animate();
+        
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            scene.fog = new THREE.Fog(0x87ceeb, 0, 100);
+            
+            // Camera (first person)
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.6, 5);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+            
+            // Clock
+            clock = new THREE.Clock();
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 20, 10);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            
+            // Build environment
+            createOfficeEnvironment();
+            
+            // Controls
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('click', onMouseClick);
+            
+            // Pointer lock
+            renderer.domElement.addEventListener('click', () => {
+                renderer.domElement.requestPointerLock();
+            });
+            
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start Module 1
+            startModule1();
+        }
+        
+        function createOfficeEnvironment() {
+            // Floor
+            const floorGeometry = new THREE.PlaneGeometry(50, 50);
+            const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            scene.add(floor);
+            
+            // Walls
+            createWall(0, 2.5, -10, 50, 5, 0.5, 0xcccccc); // Back wall
+            createWall(0, 2.5, 15, 50, 5, 0.5, 0xcccccc); // Front wall
+            createWall(-25, 2.5, 2.5, 0.5, 5, 25, 0xcccccc); // Left wall
+            createWall(25, 2.5, 2.5, 0.5, 5, 25, 0xcccccc); // Right wall
+            
+            // Kitchen area (back left)
+            createKitchen(-15, 0, -5);
+            
+            // Office desks
+            createDesk(10, 0, 0);
+            createDesk(10, 0, 5);
+            createDesk(-5, 0, 5);
+            
+            // Fire alarm (on wall)
+            createFireAlarm(-20, 1.5, -5);
+            
+            // Exit signs and doors
+            createExitSign(0, 3, 14, 'EXIT');
+            createDoor(0, 0, 14);
+            
+            // Fire extinguisher
+            createFireExtinguisher(15, 0, -8);
+        }
+        
+        function createWall(x, y, z, w, h, d, color) {
+            const geometry = new THREE.BoxGeometry(w, h, d);
+            const material = new THREE.MeshStandardMaterial({ color });
+            const wall = new THREE.Mesh(geometry, material);
+            wall.position.set(x, y, z);
+            wall.receiveShadow = true;
+            wall.castShadow = true;
+            scene.add(wall);
+        }
+        
+        function createKitchen(x, y, z) {
+            // Counter
+            const counterGeo = new THREE.BoxGeometry(4, 1, 2);
+            const counterMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+            const counter = new THREE.Mesh(counterGeo, counterMat);
+            counter.position.set(x, y + 0.5, z);
+            scene.add(counter);
+            
+            // Microwave (fire source)
+            const microGeo = new THREE.BoxGeometry(0.8, 0.6, 0.6);
+            const microMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            const microwave = new THREE.Mesh(microGeo, microMat);
+            microwave.position.set(x, y + 1.3, z);
+            microwave.userData = { type: 'fire-source' };
+            scene.add(microwave);
+            
+            window.microwavePosition = microwave.position;
+        }
+        
+        function createDesk(x, y, z) {
+            const deskGeo = new THREE.BoxGeometry(2, 0.8, 1);
+            const deskMat = new THREE.MeshStandardMaterial({ color: 0x654321 });
+            const desk = new THREE.Mesh(deskGeo, deskMat);
+            desk.position.set(x, y + 0.4, z);
+            scene.add(desk);
+        }
+        
+        function createFireAlarm(x, y, z) {
+            // Alarm box
+            const boxGeo = new THREE.BoxGeometry(0.3, 0.4, 0.15);
+            const boxMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const alarmBox = new THREE.Mesh(boxGeo, boxMat);
+            alarmBox.position.set(x, y, z);
+            
+            // Pull handle
+            const handleGeo = new THREE.BoxGeometry(0.2, 0.15, 0.1);
+            const handleMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+            const handle = new THREE.Mesh(handleGeo, handleMat);
+            handle.position.set(x, y - 0.15, z + 0.1);
+            
+            const alarmGroup = new THREE.Group();
+            alarmGroup.add(alarmBox);
+            alarmGroup.add(handle);
+            alarmGroup.position.set(x, y, z);
+            alarmGroup.userData = { type: 'fire-alarm', interactive: true };
+            
+            scene.add(alarmGroup);
+            interactiveObjects.push(alarmGroup);
+            
+            window.fireAlarm = alarmGroup;
+        }
+        
+        function createExitSign(x, y, z, text) {
+            const signGeo = new THREE.BoxGeometry(1.5, 0.5, 0.1);
+            const signMat = new THREE.MeshStandardMaterial({ 
+                color: 0x00ff00,
+                emissive: 0x00ff00,
+                emissiveIntensity: 0.5
+            });
+            const sign = new THREE.Mesh(signGeo, signMat);
+            sign.position.set(x, y, z);
+            scene.add(sign);
+        }
+        
+        function createDoor(x, y, z) {
+            const doorGeo = new THREE.BoxGeometry(2, 3, 0.2);
+            const doorMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+            const door = new THREE.Mesh(doorGeo, doorMat);
+            door.position.set(x, y + 1.5, z);
+            door.userData = { type: 'exit-door', interactive: true };
+            scene.add(door);
+            interactiveObjects.push(door);
+            
+            window.exitDoor = door;
+        }
+        
+        function createFireExtinguisher(x, y, z) {
+            const bodyGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 16);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            
+            const nozzleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.4, 8);
+            const nozzle = new THREE.Mesh(nozzleGeo, bodyMat);
+            nozzle.position.y = 0.6;
+            nozzle.rotation.z = Math.PI / 4;
+            
+            const extinguisher = new THREE.Group();
+            extinguisher.add(body);
+            extinguisher.add(nozzle);
+            extinguisher.position.set(x, y + 0.5, z);
+            extinguisher.userData = { type: 'extinguisher', interactive: true };
+            
+            scene.add(extinguisher);
+            interactiveObjects.push(extinguisher);
+            
+            window.extinguisher = extinguisher;
+        }
+        
+        function startModule1() {
+            currentModule = 1;
+            updateObjective('Explore the office. A fire will start soon...');
+            
+            // Start fire after 3 seconds
+            setTimeout(() => {
+                startFire();
+            }, 3000);
+        }
+        
+        function startModule2() {
+            currentModule = 2;
+            document.getElementById('module-title').textContent = 'Module 2: Fire Extinguisher';
+            updateObjective('Locate the fire extinguisher and put out the small fire');
+            
+            // Reset fire
+            fireExtinguished = false;
+            extinguisherGrabbed = false;
+            clearFireAndSmoke();
+            
+            // Start smaller containable fire
+            setTimeout(() => {
+                startFire(0.5); // Smaller fire
+            }, 2000);
+        }
+        
+        function startModule3() {
+            currentModule = 3;
+            document.getElementById('module-title').textContent = 'Module 3: Evacuation';
+            updateObjective('The fire is too large! Evacuate through the exit door immediately!');
+            
+            // Large fire
+            clearFireAndSmoke();
+            startFire(1.5);
+            evacuated = false;
+        }
+        
+        function startFire(intensity = 1.0) {
+            if (!window.microwavePosition) return;
+            
+            fireStarted = true;
+            updateObjective('🔥 FIRE DETECTED! Activate the fire alarm on the wall!');
+            
+            // Create fire particles
+            for (let i = 0; i < 30 * intensity; i++) {
+                const fireGeo = new THREE.SphereGeometry(0.1, 8, 8);
+                const fireMat = new THREE.MeshBasicMaterial({ 
+                    color: Math.random() > 0.5 ? 0xff4500 : 0xffa500,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const fire = new THREE.Mesh(fireGeo, fireMat);
+                fire.position.copy(window.microwavePosition);
+                fire.position.y += Math.random() * 0.5;
+                fire.userData = {
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.02,
+                        Math.random() * 0.05,
+                        (Math.random() - 0.5) * 0.02
+                    ),
+                    life: Math.random() * 2 + 1
+                };
+                scene.add(fire);
+                fireParticles.push(fire);
+            }
+            
+            // Create smoke
+            for (let i = 0; i < 20 * intensity; i++) {
+                const smokeGeo = new THREE.SphereGeometry(0.2, 8, 8);
+                const smokeMat = new THREE.MeshBasicMaterial({ 
+                    color: 0x555555,
+                    transparent: true,
+                    opacity: 0.4
+                });
+                const smoke = new THREE.Mesh(smokeGeo, smokeMat);
+                smoke.position.copy(window.microwavePosition);
+                smoke.position.y += Math.random() * 2;
+                smoke.userData = {
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.01,
+                        Math.random() * 0.03,
+                        (Math.random() - 0.5) * 0.01
+                    ),
+                    life: Math.random() * 5 + 3
+                };
+                scene.add(smoke);
+                smokeParticles.push(smoke);
+            }
+            
+            // Add fire light
+            const fireLight = new THREE.PointLight(0xff4500, 2, 10);
+            fireLight.position.copy(window.microwavePosition);
+            scene.add(fireLight);
+            window.fireLight = fireLight;
+        }
+        
+        function clearFireAndSmoke() {
+            fireParticles.forEach(p => scene.remove(p));
+            smokeParticles.forEach(p => scene.remove(p));
+            fireParticles = [];
+            smokeParticles = [];
+            if (window.fireLight) {
+                scene.remove(window.fireLight);
+            }
+        }
+        
+        function activateAlarm() {
+            alarmActivated = true;
+            updateObjective('✓ Fire alarm activated! Well done!');
+            
+            // Flash alarm
+            if (window.fireAlarm) {
+                window.fireAlarm.children[0].material.emissive = new THREE.Color(0xff0000);
+                window.fireAlarm.children[0].material.emissiveIntensity = 1;
+            }
+            
+            setTimeout(() => {
+                completeModule(85);
+            }, 2000);
+        }
+        
+        function grabExtinguisher() {
+            extinguisherGrabbed = true;
+            updateObjective('✓ Extinguisher grabbed! Approach the fire and click to extinguish it (P.A.S.S. method)');
+            
+            if (window.extinguisher) {
+                window.extinguisher.position.set(0.3, 1.2, -0.5);
+                camera.add(window.extinguisher);
+            }
+        }
+        
+        function extinguishFire() {
+            fireExtinguished = true;
+            updateObjective('✓ Fire extinguished! Excellent work using the P.A.S.S. method!');
+            
+            clearFireAndSmoke();
+            
+            setTimeout(() => {
+                completeModule(95);
+            }, 2000);
+        }
+        
+        function evacuate() {
+            evacuated = true;
+            updateObjective('✓ Successfully evacuated! You made it to safety!');
+            
+            setTimeout(() => {
+                completeModule(90);
+            }, 2000);
+        }
+        
+        function completeModule(score) {
+            document.getElementById('score').textContent = score;
+            document.getElementById('completion-screen').style.display = 'flex';
+            
+            let feedback = '';
+            if (currentModule === 1) {
+                feedback = 'You successfully detected the fire and activated the alarm. Remember: early detection saves lives!';
+            } else if (currentModule === 2) {
+                feedback = 'Great job using the fire extinguisher! Remember P.A.S.S.: Pull, Aim, Squeeze, Sweep.';
+            } else if (currentModule === 3) {
+                feedback = 'You evacuated safely! Always prioritize evacuation over fighting large fires.';
+            }
+            document.getElementById('feedback-text').textContent = feedback;
+        }
+        
+        function nextModule() {
+            document.getElementById('completion-screen').style.display = 'none';
+            
+            if (currentModule === 1) {
+                startModule2();
+            } else if (currentModule === 2) {
+                startModule3();
+            } else {
+                alert('Training Complete! You have finished all modules.');
+            }
+        }
+        
+        function restartModule() {
+            document.getElementById('completion-screen').style.display = 'none';
+            
+            // Reset states
+            fireStarted = false;
+            alarmActivated = false;
+            extinguisherGrabbed = false;
+            fireExtinguished = false;
+            evacuated = false;
+            clearFireAndSmoke();
+            
+            if (currentModule === 1) {
+                startModule1();
+            } else if (currentModule === 2) {
+                startModule2();
+            } else if (currentModule === 3) {
+                startModule3();
+            }
+        }
+        
+        function updateObjective(text) {
+            document.getElementById('objective').textContent = 'Objective: ' + text;
+        }
+        
+        function checkInteraction() {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+            
+            if (intersects.length > 0) {
+                const obj = intersects[0].object.parent.userData.type ? intersects[0].object.parent : intersects[0].object;
+                
+                if (obj.userData.interactive) {
+                    currentInteractable = obj;
+                    document.getElementById('interaction-prompt').style.display = 'block';
+                    return;
+                }
+            }
+            
+            currentInteractable = null;
+            document.getElementById('interaction-prompt').style.display = 'none';
+        }
+        
+        function interact() {
+            if (!currentInteractable) return;
+            
+            const type = currentInteractable.userData.type;
+            
+            if (type === 'fire-alarm' && fireStarted && !alarmActivated && currentModule === 1) {
+                activateAlarm();
+            } else if (type === 'extinguisher' && !extinguisherGrabbed && currentModule === 2) {
+                grabExtinguisher();
+            } else if (type === 'exit-door' && currentModule === 3 && !evacuated) {
+                evacuate();
+            } else if (extinguisherGrabbed && fireStarted && !fireExtinguished && currentModule === 2) {
+                // Click anywhere when holding extinguisher
+                extinguishFire();
+            }
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const delta = clock.getDelta();
+            
+            // Update fire particles
+            fireParticles.forEach((fire, index) => {
+                fire.position.add(fire.userData.velocity);
+                fire.userData.life -= delta;
+                fire.material.opacity = Math.max(0, fire.userData.life / 2);
+                
+                if (fire.userData.life <= 0) {
+                    scene.remove(fire);
+                    fireParticles.splice(index, 1);
+                }
+            });
+            
+            // Update smoke particles
+            smokeParticles.forEach((smoke, index) => {
+                smoke.position.add(smoke.userData.velocity);
+                smoke.scale.addScalar(0.01);
+                smoke.userData.life -= delta;
+                smoke.material.opacity = Math.max(0, smoke.userData.life / 5 * 0.4);
+                
+                if (smoke.userData.life <= 0) {
+                    scene.remove(smoke);
+                    smokeParticles.splice(index, 1);
+                }
+            });
+            
+            // Respawn particles
+            if (fireStarted && !fireExtinguished && fireParticles.length < 30) {
+                const fireGeo = new THREE.SphereGeometry(0.1, 8, 8);
+                const fireMat = new THREE.MeshBasicMaterial({ 
+                    color: Math.random() > 0.5 ? 0xff4500 : 0xffa500,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const fire = new THREE.Mesh(fireGeo, fireMat);
+                fire.position.copy(window.microwavePosition);
+                fire.userData = {
+                    velocity: new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.02,
+                        Math.random() * 0.05,
+                        (Math.random() - 0.5) * 0.02
+                    ),
+                    life: Math.random() * 2 + 1
+                };
+                scene.add(fire);
+                fireParticles.push(fire);
+            }
+            
+            // Player movement
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+            
+            if (moveForward || moveBackward) velocity.z -= direction.z * 20.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 20.0 * delta;
+            
+            camera.translateX(velocity.x * delta);
+            camera.translateZ(velocity.z * delta);
+            
+            velocity.x *= 0.9;
+            velocity.z *= 0.9;
+            
+            // Keep camera at eye level
+            camera.position.y = 1.6;
+            
+            // Check for interactions
+            checkInteraction();
+            
+            renderer.render(scene, camera);
+        }
+        
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveForward = true; break;
+                case 'KeyS': case 'ArrowDown': moveBackward = true; break;
+                case 'KeyA': case 'ArrowLeft': moveLeft = true; break;
+                case 'KeyD': case 'ArrowRight': moveRight = true; break;
+            }
+        }
+        
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveForward = false; break;
+                case 'KeyS': case 'ArrowDown': moveBackward = false; break;
+                case 'KeyA': case 'ArrowLeft': moveLeft = false; break;
+                case 'KeyD': case 'ArrowRight': moveRight = false; break;
+            }
+        }
+        
+        let euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        function onMouseMove(event) {
+            if (document.pointerLockElement === renderer.domElement) {
+                euler.setFromQuaternion(camera.quaternion);
+                euler.y -= event.movementX * 0.002;
+                euler.x -= event.movementY * 0.002;
+                euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
+                camera.quaternion.setFromEuler(euler);
+            }
+        }
+        
+        function onMouseClick(event) {
+            interact();
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    </script>
+</body>
+</html>
