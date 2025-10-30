@@ -2,6 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import { BaseModule } from './BaseModule.js';
 import { buildWorld, createExtinguisher, createDoor, createExitSign, createFireAlarm, createKitchen } from './WorldFactory.js';
 import { GameState } from '../game/GameState.js';
+import { createRadialTexture } from '../utils/Textures.js';
 
 export class Module1 extends BaseModule {
   constructor(engine, hud){
@@ -40,27 +41,29 @@ export class Module1 extends BaseModule {
     GameState.flags.fireStarted = true;
     this.hud.setObjective('🔥 FIRE DETECTED! Activate the fire alarm on the wall!');
 
-    for (let i=0;i<30*intensity;i++){
-      const fireGeo = new THREE.SphereGeometry(0.1, 8, 8);
-      const fireMat = new THREE.MeshBasicMaterial({ color: Math.random()>0.5?0xff4500:0xffa500, transparent:true, opacity:0.8 });
-      const fire = new THREE.Mesh(fireGeo, fireMat);
-      fire.position.copy(this.microwavePos);
-      fire.position.y += Math.random()*0.5;
-      fire.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.02, Math.random()*0.05, (Math.random()-0.5)*0.02), life: Math.random()*2+1 };
-      this.scene.add(fire);
-      this.fireParticles.push(fire);
+    const fireTex = createRadialTexture('rgba(255,190,0,1)','rgba(255,0,0,0)');
+    const smokeTex = createRadialTexture('rgba(120,120,120,0.5)','rgba(80,80,80,0)');
+    for (let i=0;i<40*intensity;i++){
+      const mat = new THREE.SpriteMaterial({ map: fireTex, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite:false, transparent:true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(this.microwavePos);
+      sprite.position.y += Math.random()*0.6;
+      sprite.scale.setScalar(0.5+Math.random()*0.6);
+      sprite.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.08, Math.random()*0.2, (Math.random()-0.5)*0.08), life: Math.random()*0.8+0.4, baseScale: sprite.scale.x };
+      this.scene.add(sprite);
+      this.fireParticles.push(sprite);
     }
-    for (let i=0;i<20*intensity;i++){
-      const smokeGeo = new THREE.SphereGeometry(0.2, 8, 8);
-      const smokeMat = new THREE.MeshBasicMaterial({ color:0x555555, transparent:true, opacity:0.4 });
-      const smoke = new THREE.Mesh(smokeGeo, smokeMat);
-      smoke.position.copy(this.microwavePos);
-      smoke.position.y += Math.random()*2;
-      smoke.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.01, Math.random()*0.03, (Math.random()-0.5)*0.01), life: Math.random()*5+3 };
-      this.scene.add(smoke);
-      this.smokeParticles.push(smoke);
+    for (let i=0;i<25*intensity;i++){
+      const mat = new THREE.SpriteMaterial({ map: smokeTex, color: 0x777777, depthWrite:false, transparent:true, opacity:0.6 });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(this.microwavePos);
+      sprite.position.y += Math.random()*1.0;
+      sprite.scale.setScalar(0.8+Math.random()*1.2);
+      sprite.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.03, Math.random()*0.1+0.02, (Math.random()-0.5)*0.03), life: Math.random()*3+1.5, baseScale: sprite.scale.x };
+      this.scene.add(sprite);
+      this.smokeParticles.push(sprite);
     }
-    this.fireLight = new THREE.PointLight(0xff4500, 2, 10);
+    this.fireLight = new THREE.PointLight(0xff7a00, 2.2, 12);
     this.fireLight.position.copy(this.microwavePos);
     this.scene.add(this.fireLight);
   }
@@ -86,29 +89,38 @@ export class Module1 extends BaseModule {
       this.hud.hidePrompt();
     }
 
-    // particles update
-    this.fireParticles.forEach((p, i)=>{
-      p.position.add(p.userData.velocity);
+    // particles update + light flicker
+    for (let i=this.fireParticles.length-1;i>=0;i--){
+      const p = this.fireParticles[i];
+      p.position.add(p.userData.velocity.clone().multiplyScalar(dt*60));
       p.userData.life -= dt;
-      p.material.opacity = Math.max(0, p.userData.life/2);
+      const scale = p.userData.baseScale * (0.8 + Math.random()*0.4);
+      p.scale.setScalar(scale);
+      p.material.opacity = Math.max(0, p.userData.life/1.2);
       if (p.userData.life<=0){ this.scene.remove(p); this.fireParticles.splice(i,1); }
-    });
-    this.smokeParticles.forEach((p,i)=>{
-      p.position.add(p.userData.velocity);
-      p.scale.addScalar(0.01);
+    }
+    for (let i=this.smokeParticles.length-1;i>=0;i--){
+      const p = this.smokeParticles[i];
+      p.position.add(p.userData.velocity.clone().multiplyScalar(dt*60));
       p.userData.life -= dt;
-      p.material.opacity = Math.max(0, p.userData.life/5 * 0.4);
+      p.scale.x += 0.02; p.scale.y += 0.02;
+      p.material.opacity = Math.max(0, Math.min(0.6, p.userData.life/3));
       if (p.userData.life<=0){ this.scene.remove(p); this.smokeParticles.splice(i,1); }
-    });
+    }
+    if (this.fireLight){
+      this.fireLight.intensity = 1.8 + Math.random()*0.8;
+      this.fireLight.color.setHSL(0.06 + Math.random()*0.02, 1.0, 0.5);
+    }
 
-    if (GameState.flags.fireStarted && this.fireParticles.length < 30){
-      const fireGeo = new THREE.SphereGeometry(0.1, 8, 8);
-      const fireMat = new THREE.MeshBasicMaterial({ color: Math.random()>0.5?0xff4500:0xffa500, transparent:true, opacity:0.8 });
-      const fire = new THREE.Mesh(fireGeo, fireMat);
-      fire.position.copy(this.microwavePos);
-      fire.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.02, Math.random()*0.05, (Math.random()-0.5)*0.02), life: Math.random()*2+1 };
-      this.scene.add(fire);
-      this.fireParticles.push(fire);
+    if (GameState.flags.fireStarted && this.fireParticles.length < 40){
+      const fireTex = createRadialTexture('rgba(255,190,0,1)','rgba(255,0,0,0)');
+      const mat = new THREE.SpriteMaterial({ map: fireTex, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite:false, transparent:true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(this.microwavePos);
+      sprite.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.08, Math.random()*0.2, (Math.random()-0.5)*0.08), life: Math.random()*0.8+0.4, baseScale: 0.8 };
+      sprite.scale.setScalar(0.8);
+      this.scene.add(sprite);
+      this.fireParticles.push(sprite);
     }
   }
   dispose(){
