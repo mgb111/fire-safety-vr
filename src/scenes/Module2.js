@@ -2,6 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import { BaseModule } from './BaseModule.js';
 import { buildWorld, createExtinguisher, createDoor, createExitSign, createFireAlarm, createKitchen } from './WorldFactory.js';
 import { GameState } from '../game/GameState.js';
+import { createRadialTexture } from '../utils/Textures.js';
 
 export class Module2 extends BaseModule {
   constructor(engine, hud){
@@ -48,16 +49,20 @@ export class Module2 extends BaseModule {
   }
   startFire(intensity){
     GameState.flags.fireStarted = true;
-    for (let i=0;i<30*intensity;i++){
-      const fireGeo = new THREE.SphereGeometry(0.1, 8, 8);
-      const fireMat = new THREE.MeshBasicMaterial({ color: Math.random()>0.5?0xff4500:0xffa500, transparent:true, opacity:0.8 });
-      const fire = new THREE.Mesh(fireGeo, fireMat);
-      fire.position.copy(this.microwavePos);
-      fire.position.y += Math.random()*0.5;
-      fire.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.02, Math.random()*0.05, (Math.random()-0.5)*0.02), life: Math.random()*2+1 };
-      this.scene.add(fire);
-      this.fireParticles.push(fire);
+    const fireTex = createRadialTexture('rgba(255,190,0,1)','rgba(255,0,0,0)');
+    for (let i=0;i<35*intensity;i++){
+      const mat = new THREE.SpriteMaterial({ map: fireTex, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite:false, transparent:true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(this.microwavePos);
+      sprite.position.y += Math.random()*0.6;
+      sprite.scale.setScalar(0.5+Math.random()*0.6);
+      sprite.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.08, Math.random()*0.18, (Math.random()-0.5)*0.08), life: Math.random()*0.8+0.4, baseScale: sprite.scale.x };
+      this.scene.add(sprite);
+      this.fireParticles.push(sprite);
     }
+    this.fireLight = new THREE.PointLight(0xff7a00, 2.0, 10);
+    this.fireLight.position.copy(this.microwavePos);
+    this.scene.add(this.fireLight);
   }
   extinguishFire(){
     GameState.flags.fireExtinguished = true;
@@ -75,6 +80,17 @@ export class Module2 extends BaseModule {
   update(){
     const target = this.pickCenter();
     if (target && target.userData?.interactive) this.hud.showPrompt(); else this.hud.hidePrompt();
+    // update fire sprites and light flicker
+    const dt = 1/60; // simple approximation here since Module2 doesn't receive dt param
+    for (let i=this.fireParticles.length-1;i>=0;i--){
+      const p = this.fireParticles[i];
+      p.position.add(p.userData.velocity.clone().multiplyScalar(dt*60));
+      p.userData.life -= dt;
+      p.scale.setScalar(p.userData.baseScale * (0.85 + Math.random()*0.3));
+      p.material.opacity = Math.max(0, p.userData.life/1.2);
+      if (p.userData.life<=0){ this.scene.remove(p); this.fireParticles.splice(i,1); }
+    }
+    if (this.fireLight){ this.fireLight.intensity = 1.6 + Math.random()*0.6; }
   }
   dispose(){ super.dispose(); document.removeEventListener('click', this.clickHandler); }
 }
